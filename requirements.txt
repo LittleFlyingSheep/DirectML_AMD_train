@@ -1,0 +1,9 @@
+# 运行时依赖（训练环境需要）
+torch>=2.0
+torch-directml>=0.2.5.dev240914
+ultralytics>=8.3
+
+# 可选：导出 ONNX 与跑回归测试
+onnx>=1.15
+onnxslim>=0.1
+pytest>=7.0
