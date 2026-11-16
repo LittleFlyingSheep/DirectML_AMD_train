@@ -23,6 +23,11 @@ from __future__ import annotations
 def patch_bool_ops() -> None:
     import torch
 
+    from ._once import already_patched, mark
+
+    if already_patched(torch.Tensor.mul):
+        return
+
     def _cast(self, other):
         if not isinstance(other, torch.Tensor) or other.dtype == self.dtype:
             return other
@@ -40,17 +45,17 @@ def patch_bool_ops() -> None:
                 args = (_cast(self, args[0]),) + args[1:]
             return orig(self, *args, **kw)
 
-        setattr(torch.Tensor, name, fn)
+        setattr(torch.Tensor, name, mark(fn))
 
     for _n in ("mul", "mul_", "div", "div_", "add", "add_", "sub", "sub_"):
         _wrap(_n)
 
     # dunder 走的是 C 层槽位，不会用到上面替换掉的方法，这里一并指过去
-    torch.Tensor.__mul__ = lambda self, other: torch.Tensor.mul(self, other)
-    torch.Tensor.__imul__ = lambda self, other: torch.Tensor.mul_(self, other)
-    torch.Tensor.__truediv__ = lambda self, other: torch.Tensor.div(self, other)
-    torch.Tensor.__itruediv__ = lambda self, other: torch.Tensor.div_(self, other)
-    torch.Tensor.__add__ = lambda self, other: torch.Tensor.add(self, other)
-    torch.Tensor.__iadd__ = lambda self, other: torch.Tensor.add_(self, other)
-    torch.Tensor.__sub__ = lambda self, other: torch.Tensor.sub(self, other)
-    torch.Tensor.__isub__ = lambda self, other: torch.Tensor.sub_(self, other)
+    torch.Tensor.__mul__ = mark(lambda self, other: torch.Tensor.mul(self, other))
+    torch.Tensor.__imul__ = mark(lambda self, other: torch.Tensor.mul_(self, other))
+    torch.Tensor.__truediv__ = mark(lambda self, other: torch.Tensor.div(self, other))
+    torch.Tensor.__itruediv__ = mark(lambda self, other: torch.Tensor.div_(self, other))
+    torch.Tensor.__add__ = mark(lambda self, other: torch.Tensor.add(self, other))
+    torch.Tensor.__iadd__ = mark(lambda self, other: torch.Tensor.add_(self, other))
+    torch.Tensor.__sub__ = mark(lambda self, other: torch.Tensor.sub(self, other))
+    torch.Tensor.__isub__ = mark(lambda self, other: torch.Tensor.sub_(self, other))

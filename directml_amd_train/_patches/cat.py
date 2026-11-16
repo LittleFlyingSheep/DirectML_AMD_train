@@ -15,6 +15,11 @@ from __future__ import annotations
 def patch_cat() -> None:
     import torch
 
+    from ._once import already_patched, mark
+
+    if already_patched(torch.cat):
+        return
+
     _orig = torch.cat
 
     def cat(tensors, dim=0, *a, **kw):
@@ -30,4 +35,4 @@ def patch_cat() -> None:
                 ts = keep
         return _orig(ts, dim, *a, **kw)
 
-    torch.cat = cat
+    torch.cat = mark(cat)

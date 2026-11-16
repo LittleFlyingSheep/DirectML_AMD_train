@@ -30,17 +30,19 @@ from ._patches import (
     patch_bce,
     patch_cat,
     patch_device,
+    patch_flat_index,
     patch_gather,
     patch_inference_mode,
     patch_loss_on_cpu,
     patch_memory,
     patch_scatter,
+    patch_slot_assign,
     patch_unique,
 )
 from .selftest import check_gradient_alignment
 from .trainer import export_onnx, train_yolo
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "enable_directml_amd",
@@ -57,6 +59,8 @@ __all__ = [
     "patch_gather",
     "patch_bce",
     "patch_addmv",
+    "patch_slot_assign",
+    "patch_flat_index",
     "patch_loss_on_cpu",
     "__version__",
 ]

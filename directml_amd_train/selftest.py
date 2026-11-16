@@ -56,12 +56,13 @@ def _run(model, x, batch, device):
         preds = preds[1] if isinstance(preds[1], dict) else preds[0]
     crit = v8DetectionLoss(model)
     loss, _items = crit(preds, {k: v.to(device) for k, v in batch.items()})
+    loss_device = str(loss.device)
     loss.sum().backward()
     grads = {}
     for name, p in model.named_parameters():
         if p.grad is not None:
             grads[name] = p.grad.detach().float().cpu().clone()
-    return [float(v) for v in loss.detach().tolist()], grads
+    return [float(v) for v in loss.detach().tolist()], grads, loss_device
 
 
 def check_gradient_alignment(verbose: bool = True, nc: int = 2,
@@ -81,10 +82,11 @@ def check_gradient_alignment(verbose: bool = True, nc: int = 2,
     batch_cpu = _make_batch()
 
     model = _build_model(nc)
-    cpu_loss, cpu_grads = _run(model, x_cpu, batch_cpu, torch.device("cpu"))
+    cpu_loss, cpu_grads, _cpu_loss_device = _run(model, x_cpu, batch_cpu, torch.device("cpu"))
 
     model = model.to(torch.device("privateuseone:0"))
-    dml_loss, dml_grads = _run(model, x_cpu, batch_cpu, torch.device("privateuseone:0"))
+    dml_loss, dml_grads, dml_loss_device = _run(model, x_cpu, batch_cpu,
+                                                torch.device("privateuseone:0"))
 
     missing = [k for k in cpu_grads if k not in dml_grads]
     zero_on_dml = []
@@ -120,6 +122,8 @@ def check_gradient_alignment(verbose: bool = True, nc: int = 2,
         "ok": (not zero_on_dml) and (not missing) and agg_rel < _AGG_TOL and worst < _MAX_TOL,
         "cpu_loss": cpu_loss,
         "dml_loss": dml_loss,
+        "loss_device": dml_loss_device,
+        "loss_on_gpu": dml_loss_device.startswith("privateuseone"),
         "param_count": len(cpu_grads),
         "cls_param_count": len(cls_names),
         "cls_nonzero_on_dml": cls_nonzero,
@@ -135,6 +139,8 @@ def check_gradient_alignment(verbose: bool = True, nc: int = 2,
     if verbose:
         print("[自检] CPU  loss = %s" % ["%.6f" % v for v in cpu_loss])
         print("[自检] DML  loss = %s" % ["%.6f" % v for v in dml_loss])
+        print("[自检] 损失计算设备 = %s%s"
+              % (dml_loss_device, "（整段留在显卡上）" if result["loss_on_gpu"] else ""))
         print("[自检] 参数梯度 %d 个，分类分支 %d 个（DirectML 上非零 %d 个）"
               % (len(cpu_grads), len(cls_names), cls_nonzero))
         print("[自检] 梯度范数合计 CPU %.6g / DML %.6g，聚合相对误差 %.3e"

@@ -28,6 +28,11 @@ def patch_device() -> None:
     import torch
     from ultralytics.utils import torch_utils
 
+    from ._once import already_patched, mark
+
+    if already_patched(torch_utils.select_device):
+        return
+
     _orig = torch_utils.select_device
 
     def select_device(device="", *args, **kw):
@@ -36,7 +41,7 @@ def patch_device() -> None:
             return torch.device("privateuseone:0")
         return _orig(device, *args, **kw)
 
-    torch_utils.select_device = select_device
+    torch_utils.select_device = mark(select_device)
     for mod_name in _MODULES:
         mod = sys.modules.get(mod_name)
         if mod is not None and hasattr(mod, "select_device"):

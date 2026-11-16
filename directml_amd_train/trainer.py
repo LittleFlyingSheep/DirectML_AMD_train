@@ -69,18 +69,30 @@ def train_yolo(
     patience: int = 15,
     seed: int = 0,
     exist_ok: bool = True,
+    loss_on_cpu: bool = False,
+    verify_index_bounds: bool = True,
+    flat_index: bool = True,
     **kwargs: Any,
 ):
     """在 DirectML 显卡上训练 YOLO。
 
     参数与 ultralytics 的 model.train() 对齐，多出来的
     device="dml" 是这里特有的写法（"cpu" 仍然走原生 CPU 路径）。
+
+    loss_on_cpu=True 时把损失计算放到 CPU（默认 False，损失整段在显卡上）。
+    小模型上 CPU 算损失反而快一点，详见 patch_loss_on_cpu 的说明。
+
+    verify_index_bounds=True 时保留高级索引的越界检查（越界抛 IndexError）；
+    DirectML 的 gather 越界不报错会读到野内存，默认开着。
+    关掉能再省一点时间（每个索引点约 0.3 ms）。
     """
     from ._patches import enable_directml_amd
 
     dev = resolve_device(device)
     if getattr(dev, "type", "") == "privateuseone":
-        enable_directml_amd()
+        enable_directml_amd(loss_on_cpu=loss_on_cpu,
+                            verify_index_bounds=verify_index_bounds,
+                            flat_index=flat_index)
 
     from ultralytics import YOLO  # noqa: E402  必须在补丁之后 import
 

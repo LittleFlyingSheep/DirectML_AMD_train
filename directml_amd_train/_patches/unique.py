@@ -14,6 +14,11 @@ from __future__ import annotations
 def patch_unique() -> None:
     import torch
 
+    from ._once import already_patched, mark
+
+    if already_patched(torch.unique):
+        return
+
     _orig = torch.unique
 
     def unique(input, *args, **kw):
@@ -29,4 +34,4 @@ def patch_unique() -> None:
             return out.to(input.device)
         return _orig(input, *args, **kw)
 
-    torch.unique = unique
+    torch.unique = mark(unique)

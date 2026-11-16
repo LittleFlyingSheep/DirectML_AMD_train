@@ -41,3 +41,10 @@ def test_cls_branch_gets_gradient():
     res = check_gradient_alignment(verbose=False)
     assert res["cls_param_count"] > 0
     assert res["cls_nonzero_on_dml"] == res["cls_param_count"]
+
+
+def test_loss_is_computed_on_gpu():
+    """损失计算必须整段留在显卡上（以前是搬到 CPU 算的）。"""
+    res = check_gradient_alignment(verbose=False)
+    assert res["loss_on_gpu"], "损失不在显卡上算: %s" % res["loss_device"]
+    assert res["loss_device"].startswith("privateuseone")

@@ -26,6 +26,11 @@ from __future__ import annotations
 def patch_gather() -> None:
     import torch
 
+    from ._once import already_patched, mark
+
+    if already_patched(torch.gather):
+        return
+
     _orig_gather = torch.gather
     _orig_tensor_gather = torch.Tensor.gather
 
@@ -66,5 +71,5 @@ def patch_gather() -> None:
             return _GatherFix.apply(self, index, dim)
         return _orig_tensor_gather(self, dim, index, *args, **kw)
 
-    torch.gather = gather
-    torch.Tensor.gather = tensor_gather
+    torch.gather = mark(gather)
+    torch.Tensor.gather = mark(tensor_gather)
