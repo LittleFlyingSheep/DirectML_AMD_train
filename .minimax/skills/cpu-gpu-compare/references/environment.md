@@ -2,13 +2,13 @@
 
 ## 跑起来需要什么
 
-解释器不是 venv，是 `anaconda3\envs\luna\python.exe`（Python 3.11），
+解释器不是 venv，是 `anaconda3\envs\maimai\python.exe`（Python 3.11），
 torch / ultralytics 靠 `PYTHONPATH` 拼两个 site-packages 目录：
 
 ```powershell
 $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_env'
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m pytest tests/ -q
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m Direct_AMD_train doctor
+& 'C:\Users\<user>\anaconda3\envs\maimai\python.exe' -u -m pytest tests/ -q
+& 'C:\Users\<user>\anaconda3\envs\maimai\python.exe' -u -m Direct_AMD_train doctor
 ```
 
 - `yolo_dml_env`：torch 2.4.1+cpu、torchvision 0.19.1、torch-directml 0.2.5.dev240914
@@ -19,13 +19,19 @@ $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_e
 - `_debug/`、runs/、*.log、*.pt、*.onnx 都在 .gitignore 里，换机器要重搭
 - 显卡：AMD Radeon Pro VII（Vega 20 / gfx906），torch_directml 的设备名带尾随空格
 
-## 补丁清单（12 条，改动前后语义不同）
+## 补丁清单（16 条，分两层；改动前后语义不同）
+
+补丁从 1.x 的 12 条扩到 16 条，并按作用范围分两层（`enable(framework=...)` 控制打哪层）：
+**torch 层**改 torch / torch_directml 自己的算子语义，与框架无关；
+**ultralytics 层**改 ultralytics 内部行为，按需开启。
+
+torch 层：
 
 | # | 补丁 | DirectML 的问题 | 处理方式 |
 | --- | --- | --- | --- |
 | 1 | `patch_inference_mode` | BatchNorm 原地写缓冲区 + inference tensor 冲突 | 降级成 `no_grad` |
-| 2 | `patch_device` | `select_device` 不认 privateuseone | 拦下 privateuseone 直通 |
-| 3 | `patch_unique` | `unique` 不支持 `return_counts`；对 float 张量会直接崩进程 | 回 CPU 算再搬回 |
+| 2 | `patch_unique` | `unique` 不支持 `return_counts`；二维以上输入直接崩进程；bool 数值错 | 按情况回 CPU，一维数值类型留在显卡上 |
+| 3 | `patch_sort` | 待排值全相等时 UnicodeDecodeError（`sort` / `topk` 一样） | 先试原生，炸了回 CPU 重算 |
 | 4 | `patch_scatter` | `scatter_add_` 不累加（结果是错的） | dim=0 改用 `index_put_(accumulate=True)` |
 | 5 | `patch_bool_ops` | `float32 * bool` 的 dtype 被判成 bool、数值被截断 | 非浮点操作数转 dtype |
 | 6 | `patch_memory` | `PrivateUse1Module` 没有 `memory_reserved` | 补恒 0 实现 |
@@ -35,6 +41,17 @@ $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_e
 | 10 | `patch_addmv` | `aten::addmv.out` 不支持 | 改写成 elementwise |
 | 11 | `patch_slot_assign` | **视图 storage_offset 恒为 0，原地赋值反向写错槽位（致命）** | 槽位赋值走 `index_put_` |
 | 12 | `patch_flat_index` | 带梯度时高级索引是一串 `copy_`，队列一深被拖慢 | 折算成扁平偏移 + `gather` |
+
+ultralytics 层：
+
+| # | 补丁 | DirectML 的问题 | 处理方式 |
+| --- | --- | --- | --- |
+| 13 | `patch_device` | `select_device` 不认 privateuseone | 拦下 privateuseone 直通 |
+| 14 | `patch_ultralytics_memory` | 训练进度条问显存，DirectML 没有这个方法 | 恒返回 0 |
+| 15 | `patch_probiou` | OBB 的旋转框 IoU 在 DirectML 上不支持 | 回 CPU 算完再搬回显卡 |
+| 16 | `patch_loss_on_cpu` | 小模型 / 小输入上损失在 CPU 反而更快 | 可选开关，把损失搬回 CPU |
+
+完整表（带适用任务）看 `python -m Direct_AMD_train patches`。
 
 补丁 11 是「跑得完但不收敛」的根因：CopySlices 反向用
 `view.sym_storage_offset() - base.sym_storage_offset()` 定位被覆盖的区间，

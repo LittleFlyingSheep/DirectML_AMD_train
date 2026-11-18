@@ -68,14 +68,14 @@ $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_e
 Set-Location '<repo>'
 
 # 组件级（两个进程）
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u .minimax\skills\cpu-gpu-compare\scripts\bench_components.py cpu
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u .minimax\skills\cpu-gpu-compare\scripts\bench_components.py dml
+& 'C:\Users\<user>\anaconda3\envs\maimai\python.exe' -u .minimax\skills\cpu-gpu-compare\scripts\bench_components.py cpu
+& 'C:\Users\<user>\anaconda3\envs\maimai\python.exe' -u .minimax\skills\cpu-gpu-compare\scripts\bench_components.py dml
 
 # 端到端配对（~11 分钟）
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u .minimax\skills\cpu-gpu-compare\scripts\bench_ab.py --epochs 25
+& 'C:\Users\<user>\anaconda3\envs\maimai\python.exe' -u .minimax\skills\cpu-gpu-compare\scripts\bench_ab.py --epochs 25
 
 # 数值对齐
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m Direct_AMD_train doctor
+& 'C:\Users\<user>\anaconda3\envs\maimai\python.exe' -u -m Direct_AMD_train doctor
 ```
 
 训练产物在 `_debug/runs/<name>/results.csv`，`time` 列是累计秒数，

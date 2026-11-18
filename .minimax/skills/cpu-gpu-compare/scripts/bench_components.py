@@ -17,9 +17,13 @@ import time
 import statistics
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 ENVS = os.path.join(REPO, "_debug", "envs")
-for sub in ("yolo_dml_env", "yolo_train_env"):
+# 顺序要紧：yolo_dml_env 必须排在 yolo_train_env 前面。
+# 两个目录里都有 torch，但只有 yolo_dml_env 里的 torch_directml 是按 torch 2.4.1 编译的，
+# 顺序颠倒会让 torch 2.15 配上 torch_directml_native → DLL 加载失败（找不到指定的程序）。
+# 倒着 insert(0) 才能让列表顺序与声明顺序一致。
+for sub in reversed(("yolo_dml_env", "yolo_train_env")):
     p = os.path.join(ENVS, sub)
     if os.path.isdir(p):
         sys.path.insert(0, p)
@@ -29,6 +33,15 @@ MODE = sys.argv[1] if len(sys.argv) > 1 else "dml"
 
 import torch
 import torch_directml  # noqa: F401  注册 privateuseone 后端
+
+# 必须先打补丁再 import ultralytics：
+# patch_inference_mode 要抢在 ultralytics 的 smart_inference_mode 装饰器之前生效，
+# 而 ultralytics 的损失里 batch_idx.unique(return_counts=True) 在 DirectML 上直接报
+# "Return counts not implemented" —— 不打补丁连损失都算不出来。
+# CPU 模式也照样打：补丁只在 privateuseone 设备上改变行为，CPU 路径原样透传。
+from Direct_AMD_train import enable
+
+enable(framework="torch", verbose=True)
 
 DML = torch.device("privateuseone:0")
 DEV = torch.device("cpu") if MODE == "cpu" else DML

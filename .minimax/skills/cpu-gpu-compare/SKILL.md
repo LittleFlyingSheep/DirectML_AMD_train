@@ -34,17 +34,21 @@ displayNames:
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+  Where-Object { $_.CommandLine -match 'bench_components|bench_ab|train_yolo|DirectML_AMD_train' } |
   ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
 ```
 
-只清本仓库脚本起的进程；先看 `CommandLine` 确认，别误杀用户自己的任务。
+**必须按 `CommandLine` 过滤，不要无差别杀掉所有 `python.exe`** —— 这台机器上可能还开着
+别的会话的任务（别的项目、别的解释器），无差别清场会把它们一起带走。
+先 `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Select-Object ProcessId, CommandLine`
+看清楚再杀，只杀本仓库脚本起的那些。
 
 ### 2. 数值对齐先过关，否则耗时对比没有意义
 
 ```powershell
 $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_env'
-& '<anaconda>\envs\luna\python.exe' -u -m pytest tests/ -q
-& '<anaconda>\envs\luna\python.exe' -u -m Direct_AMD_train doctor
+& '<anaconda>\envs\maimai\python.exe' -u -m pytest tests/ -q
+& '<anaconda>\envs\maimai\python.exe' -u -m Direct_AMD_train doctor
 ```
 
 doctor 要看到：损失设备 = `privateuseone:0`、分类分支梯度 24/24 非零、
@@ -54,8 +58,8 @@ doctor 要看到：损失设备 = `privateuseone:0`、分类分支梯度 24/24 �
 ### 3. 组件级计时：每个配置独立进程 + 迭代间排空队列
 
 ```powershell
-& '<anaconda>\envs\luna\python.exe' -u <skill>\scripts\bench_components.py cpu
-& '<anaconda>\envs\luna\python.exe' -u <skill>\scripts\bench_components.py dml
+& '<anaconda>\envs\maimai\python.exe' -u <skill>\scripts\bench_components.py cpu
+& '<anaconda>\envs\maimai\python.exe' -u <skill>\scripts\bench_components.py dml
 ```
 
 脚本已经处理掉两个必须处理的细节，别在临时脚本里漏掉：
@@ -72,7 +76,7 @@ doctor 要看到：损失设备 = `privateuseone:0`、分类分支梯度 24/24 �
 ### 4. 端到端配对 A/B：同机同时段，只差一个开关
 
 ```powershell
-& '<anaconda>\envs\luna\python.exe' -u <skill>\scripts\bench_ab.py --epochs 25
+& '<anaconda>\envs\maimai\python.exe' -u <skill>\scripts\bench_ab.py --epochs 25
 ```
 
 规则（不遵守就会得出错误结论）：
@@ -128,7 +132,7 @@ Output: 组件级五项耗时 + 两对配对 A/B（4.3% / 7.9%）+ 队列空/积
 ## Windows (win32) platform notes
 
 - 本仓库只在 Windows 上跑（torch-directml 只发 Windows 轮子），命令一律用 PowerShell。
-- 解释器是 `C:\Users\<user>\anaconda3\envs\luna\python.exe`（Python 3.11），
+- 解释器是 `C:\Users\<user>\anaconda3\envs\maimai\python.exe`（Python 3.11），
   torch/ultralytics 不在 venv 里，靠 `PYTHONPATH` 拼两个 site-packages 目录。
 - 训练环境与数据集在 `_debug/` 下（被 gitignore），换机器要按
   `references/environment.md` 重搭。
