@@ -21,8 +21,8 @@
 
 用法::
 
-    from directml_amd_train import enable_directml_amd
-    enable_directml_amd(loss_on_cpu=True)     # 损失回 CPU 算
+    from Direct_AMD_train import enable
+    enable(loss_on_cpu=True)     # 损失回 CPU 算
 
 或者在训练封装里::
 

@@ -75,7 +75,7 @@ Set-Location '<repo>'
 & 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u .minimax\skills\cpu-gpu-compare\scripts\bench_ab.py --epochs 25
 
 # 数值对齐
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m directml_amd_train doctor
+& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m Direct_AMD_train doctor
 ```
 
 训练产物在 `_debug/runs/<name>/results.csv`，`time` 列是累计秒数，

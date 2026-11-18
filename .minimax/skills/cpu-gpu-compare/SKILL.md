@@ -1,7 +1,7 @@
 ---
 name: cpu-gpu-compare
 description: |
-  在 DirectML_AMD_train 仓库里做「CPU 计算 vs A 卡（DirectML）计算」的对比与瓶颈定位：
+  在 Direct_AMD_train 仓库里做「CPU 计算 vs A 卡（DirectML）计算」的对比与瓶颈定位：
   组件级耗时、端到端配对 A/B、数值对齐验证，最后产出可交付的对比表。
   触发短语："CPU 和 A 卡对比"、"CPU 与 GPU 性能对比"、"这个补丁值多少"、"损失在哪算更快"、
   "DirectML 加速比"、"benchmark the patches"、"CPU vs GPU comparison"、"损失计算在哪儿算"。
@@ -44,7 +44,7 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
 ```powershell
 $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_env'
 & '<anaconda>\envs\luna\python.exe' -u -m pytest tests/ -q
-& '<anaconda>\envs\luna\python.exe' -u -m directml_amd_train doctor
+& '<anaconda>\envs\luna\python.exe' -u -m Direct_AMD_train doctor
 ```
 
 doctor 要看到：损失设备 = `privateuseone:0`、分类分支梯度 24/24 非零、

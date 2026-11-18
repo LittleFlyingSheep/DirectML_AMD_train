@@ -23,7 +23,7 @@ PY = sys.executable
 def run_one(name, param, value, epochs, data):
     """跑一遍训练，返回 (总秒数, 最后一行 CSV)。"""
     code = (
-        "from directml_amd_train.trainer import train_yolo; "
+        "from Direct_AMD_train.trainer import train_yolo; "
         "train_yolo(data=%r, epochs=%d, imgsz=512, batch=8, device='dml', "
         "project=%r, name=%r, workers=0, mosaic=0.0, fliplr=0.0, scale=0.3, hsv_s=0.4, "
         "%s=%r)" % (data, epochs, os.path.join(REPO, "_debug", "runs"), name, param, value)

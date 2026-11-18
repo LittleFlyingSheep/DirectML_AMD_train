@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """命令行入口。
 
-    python -m directml_amd_train doctor              # 环境信息 + 数值对齐自检
-    python -m directml_amd_train train --data data.yaml --epochs 25
-    python -m directml_amd_train export --weights runs/exp/weights/best.pt --out out/
+    python -m Direct_AMD_train doctor              # 环境信息 + 数值对齐自检
+    python -m Direct_AMD_train probe               # 算子能力探测
+    python -m Direct_AMD_train patches             # 补丁清单
+    python -m Direct_AMD_train train --data data.yaml --epochs 25
+    python -m Direct_AMD_train export --weights runs/exp/weights/best.pt --out out/
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 
@@ -24,6 +27,22 @@ def _cmd_doctor(args) -> int:
     from .selftest import check_gradient_alignment
     res = check_gradient_alignment(verbose=True)
     return 0 if res.get("ok") else 1
+
+
+def _cmd_probe(args) -> int:
+    from .probe import probe_operators
+
+    data = probe_operators(native=args.native, verbose=not args.json)
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_patches(args) -> int:
+    from .registry import format_patches
+
+    print(format_patches(layer=args.layer))
+    return 0
 
 
 def _cmd_train(args) -> int:
@@ -55,12 +74,23 @@ def _cmd_export(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="directml_amd_train",
-        description="让 ultralytics YOLO 在 AMD 显卡（DirectML / DirectX 12）上训练")
+        prog="Direct_AMD_train",
+        description="让 PyTorch / ultralytics 在 AMD 显卡（DirectML / DirectX 12）上正常训练")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor", help="环境信息 + 梯度数值对齐自检")
     d.set_defaults(func=_cmd_doctor)
+
+    pr = sub.add_parser("probe", help="DirectML 算子能力探测")
+    pr.add_argument("--native", action="store_true",
+                    help="测原生能力（不打补丁；已知会崩进程的算子会跳过）")
+    pr.add_argument("--json", action="store_true", help="输出 JSON")
+    pr.set_defaults(func=_cmd_probe)
+
+    pa = sub.add_parser("patches", help="补丁清单")
+    pa.add_argument("--layer", choices=("torch", "ultralytics"), default=None,
+                    help="只看某一层")
+    pa.set_defaults(func=_cmd_patches)
 
     t = sub.add_parser("train", help="训练 YOLO")
     t.add_argument("--data", required=True, help="data.yaml 或它所在的目录")

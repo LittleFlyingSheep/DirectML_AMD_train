@@ -3,7 +3,7 @@
 
 注意本模块在 import 时不碰 ultralytics —— 补丁必须在 import ultralytics
 之前打上，所以 ultralytics 的 import 一律放在函数里、且在
-enable_directml_amd() 之后。
+enable() 之后。
 """
 from __future__ import annotations
 
@@ -86,11 +86,11 @@ def train_yolo(
     DirectML 的 gather 越界不报错会读到野内存，默认开着。
     关掉能再省一点时间（每个索引点约 0.3 ms）。
     """
-    from ._patches import enable_directml_amd
+    from ._patches import enable
 
     dev = resolve_device(device)
     if getattr(dev, "type", "") == "privateuseone":
-        enable_directml_amd(loss_on_cpu=loss_on_cpu,
+        enable(loss_on_cpu=loss_on_cpu,
                             verify_index_bounds=verify_index_bounds,
                             flat_index=flat_index)
 
@@ -123,7 +123,7 @@ def train_yolo(
         if k in kwargs:
             train_kwargs[k] = kwargs[k]
 
-    print("[directml_amd_train] 开始训练: model=%s device=%s" % (model, dev))
+    print("[Direct_AMD_train] 开始训练: model=%s device=%s" % (model, dev))
     m = YOLO(model)
     m.train(**train_kwargs)
     return m
@@ -159,6 +159,6 @@ def export_onnx(
             break
     if not os.path.isfile(target):
         raise FileNotFoundError("导出失败：没找到 onnx 文件（检查权重路径）")
-    print("[directml_amd_train] ONNX 已导出: %s（%d 字节）"
+    print("[Direct_AMD_train] ONNX 已导出: %s（%d 字节）"
           % (target, os.path.getsize(target)))
     return target

@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from directml_amd_train.selftest import check_gradient_alignment  # noqa: E402
+from Direct_AMD_train.selftest import check_gradient_alignment  # noqa: E402
 
 try:
     import torch_directml  # noqa: F401

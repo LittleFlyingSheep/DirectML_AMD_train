@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """小工具：保证补丁只生效一次。
 
-enable_directml_amd() 在一个进程里可能被调用多次（比如先在用户代码里
+enable() 在一个进程里可能被调用多次（比如先在用户代码里
 调一次，之后又 train_yolo() 内部调一次）。如果补丁不加保护，第二次调用
 会把第一次的替换再包一层，轻则梯度被算两遍，重则把别的补丁顶掉 ——
 比如 patch_bool_ops 会重新设置 Tensor.__imul__，把 patch_slot_assign

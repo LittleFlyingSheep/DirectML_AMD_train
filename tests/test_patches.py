@@ -17,12 +17,12 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from directml_amd_train._patches import enable_directml_amd  # noqa: E402
+from Direct_AMD_train._patches import enable  # noqa: E402
 
 DML = "privateuseone:0"
 
 try:
-    enable_directml_amd(verbose=False)
+    enable(verbose=False)
     import torch
     import torch_directml  # noqa: F401
     _HAS_DML = True
@@ -216,7 +216,7 @@ def test_scatter_add_matches_cpu():
 
 
 def test_enable_twice_keeps_fixes():
-    """enable_directml_amd() 调两次，修复不能被后来的补丁顶掉。
+    """enable() 调两次，修复不能被后来的补丁顶掉。
 
     patch_bool_ops 也会替换 Tensor.__imul__ 等 dunder，如果它不幂等，
     第二次 enable 时就会把 patch_slot_assign 的修复悄悄覆盖掉 ——
@@ -224,10 +224,10 @@ def test_enable_twice_keeps_fixes():
     """
     import torch
 
-    from directml_amd_train._patches import enable_directml_amd
+    from Direct_AMD_train._patches import enable
 
-    enable_directml_amd(verbose=False)
-    enable_directml_amd(verbose=False)
+    enable(verbose=False)
+    enable(verbose=False)
 
     grads = {}
     for dev in ("cpu", DML):
@@ -245,12 +245,12 @@ def test_loss_on_cpu_switch_is_optional():
     import torch
 
     from ultralytics.utils import loss as _loss_mod
-    from directml_amd_train._patches import enable_directml_amd
+    from Direct_AMD_train._patches import enable
 
     original = _loss_mod.v8DetectionLoss.get_assigned_targets_and_loss
     try:
-        enable_directml_amd(verbose=False, loss_on_cpu=True)
-        from directml_amd_train import selftest as st
+        enable(verbose=False, loss_on_cpu=True)
+        from Direct_AMD_train import selftest as st
         res = st.check_gradient_alignment(verbose=False)
         assert res["ok"], "CPU 损失路径下梯度没对齐: %s" % res["worst_name"]
         assert res["cls_nonzero_on_dml"] == res["cls_param_count"]
@@ -427,7 +427,7 @@ def test_flat_index_bounds_check_can_be_disabled():
     """verify_bounds=False 只是关掉越界检查，取值语义不变。"""
     import torch
 
-    from directml_amd_train._patches import patch_flat_index
+    from Direct_AMD_train._patches import patch_flat_index
 
     torch.manual_seed(0)
     base = torch.randn(6, 4)
@@ -444,3 +444,125 @@ def test_flat_index_bounds_check_can_be_disabled():
         assert torch.allclose(outs["cpu"][1], outs[DML][1], atol=1e-5)
     finally:
         patch_flat_index(verify_bounds=True)
+
+
+def test_unique_multi_dim_matches_cpu():
+    """二维以上的 unique 在原生 DirectML 上会把进程打崩，补丁后必须与 CPU 一致。
+
+    原生表现是 dml_tensor_desc.cc:76 的断言失败（退出码 0xC0000409），
+    那是原生层崩溃，不是 Python 异常，try/except 拦不住。
+    """
+    import torch
+    torch.manual_seed(0)
+    for dev in ("cpu", DML):
+        x = torch.randn(4, 5, device=torch.device(dev))
+        out = torch.unique(x)
+        assert out.shape == (20,)
+        assert torch.allclose(out.cpu(), torch.unique(x.cpu()))
+
+
+def test_unique_bool_matches_cpu():
+    """bool 的 unique 原生数值就是错的（DML 少一个 False），补丁后必须与 CPU 一致。"""
+    import torch
+    for dev in ("cpu", DML):
+        x = torch.tensor([True, False, True, False], device=torch.device(dev))
+        out = torch.unique(x)
+        assert out.cpu().tolist() == torch.unique(x.cpu()).tolist()
+
+
+def test_unique_return_counts_matches_cpu():
+    """return_counts 原生不支持，补丁后必须与 CPU 一致。"""
+    import torch
+    torch.manual_seed(0)
+    for dev in ("cpu", DML):
+        x = torch.randint(0, 5, (32,), device=torch.device(dev))
+        vals, counts = torch.unique(x, return_counts=True)
+        cv, cc = torch.unique(x.cpu(), return_counts=True)
+        assert torch.equal(vals.cpu(), cv)
+        assert torch.equal(counts.cpu(), cc)
+
+
+def test_argsort_equal_values_matches_cpu():
+    """全等值张量的 argsort 原生会炸（UnicodeDecodeError），补丁后必须能用。"""
+    import torch
+    for dev in ("cpu", DML):
+        x = torch.full((64,), 0.9, device=torch.device(dev))
+        idx = torch.argsort(x, descending=True)
+        assert idx.shape == (64,)
+        assert idx.device.type == ("privateuseone" if dev == DML else "cpu")
+
+
+def test_sort_topk_fallback_matches_cpu():
+    """sort / topk 遇到全等值也要能跑，且数值与 CPU 一致。"""
+    import torch
+    for dev in ("cpu", DML):
+        x = torch.full((32,), 0.5, device=torch.device(dev))
+        v, i = torch.sort(x, descending=True)
+        assert torch.allclose(v.cpu(), torch.sort(x.cpu(), descending=True).values)
+        tv, ti = torch.topk(x, 3)
+        assert torch.allclose(tv.cpu(), torch.topk(x.cpu(), 3).values)
+
+
+def test_sort_fallback_keeps_gradient():
+    """回 CPU 重算不能把梯度弄丢：结果必须与 CPU 逐位相同。"""
+    import torch
+    torch.manual_seed(0)
+    base = torch.randn(8, 4)
+
+    def grads(dev, cpu_side):
+        x = base.clone().to(torch.device(dev)).requires_grad_(True)
+        if cpu_side:
+            out = torch.sort(x.cpu(), dim=1, descending=True).values.to(x.device)
+        else:
+            out = torch.sort(x, dim=1, descending=True).values
+        (out * torch.arange(1., 5., device=x.device)).sum().backward()
+        return x.grad.detach().cpu()
+
+    g_cpu = grads("cpu", False)
+    g_dml = grads(DML, True)
+    assert torch.allclose(g_cpu, g_dml, atol=1e-5)
+
+
+def test_registry_matches_actual_patches():
+    """注册表里列的每条补丁都要有对应的实现，别让文档漂了。"""
+    from Direct_AMD_train import list_patches
+    from Direct_AMD_train import _patches
+
+    rows = list_patches()
+    assert len(rows) >= 15
+    for r in rows:
+        assert hasattr(_patches, r["name"]), "注册表里的 %s 没有实现" % r["name"]
+        assert r["layer"] in ("torch", "ultralytics")
+        assert r["symptom"] and r["fix"]
+
+    torch_layer = {r["name"] for r in list_patches(layer="torch")}
+    ultra_layer = {r["name"] for r in list_patches(layer="ultralytics")}
+    assert torch_layer and ultra_layer
+    assert not (torch_layer & ultra_layer)
+
+
+def test_enable_torch_layer_does_not_import_ultralytics():
+    """framework="torch" 不能把 ultralytics 拖进来 —— 纯 PyTorch 项目也得能用。"""
+    import os
+    import subprocess
+    import sys
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ)
+    env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+    code = ("import sys\n"
+            "from Direct_AMD_train import enable\n"
+            "enable(framework='torch', verbose=False)\n"
+            "print('CLEAN' if 'ultralytics' not in sys.modules else 'DIRTY')\n")
+    out = subprocess.run([sys.executable, "-c", code],
+                       capture_output=True, text=True, env=env)
+    assert "CLEAN" in out.stdout, out.stdout + out.stderr
+
+
+def test_probe_subset_runs():
+    """能力探测工具要能跑完，并且补丁后这一组一个都不该失败。"""
+    from Direct_AMD_train import probe_operators
+
+    data = probe_operators(verbose=False, only=("索引/散射",))
+    assert data["total"] > 0
+    assert data["failed"] == 0, [r for r in data["results"] if r["ok"] is False]

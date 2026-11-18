@@ -1,4 +1,4 @@
-# 环境与后端事实（DirectML_AMD_train）
+# 环境与后端事实（Direct_AMD_train）
 
 ## 跑起来需要什么
 
@@ -8,7 +8,7 @@ torch / ultralytics 靠 `PYTHONPATH` 拼两个 site-packages 目录：
 ```powershell
 $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_env'
 & 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m pytest tests/ -q
-& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m directml_amd_train doctor
+& 'C:\Users\<user>\anaconda3\envs\luna\python.exe' -u -m Direct_AMD_train doctor
 ```
 
 - `yolo_dml_env`：torch 2.4.1+cpu、torchvision 0.19.1、torch-directml 0.2.5.dev240914
@@ -41,7 +41,7 @@ $env:PYTHONPATH='<repo>\_debug\envs\yolo_dml_env;<repo>\_debug\envs\yolo_train_e
 而 DirectML 的视图 offset 恒为 0 → 梯度写到第一个槽位 → 分类分支梯度恒为 0。
 
 所有补丁都用 `_once.py` 幂等化：`patch_bool_ops` 会替换 `Tensor.__imul__` 等 dunder，
-不幂等的话第二次 `enable_directml_amd()` 会把 `patch_slot_assign` 的修复悄悄顶掉。
+不幂等的话第二次 `enable()` 会把 `patch_slot_assign` 的修复悄悄顶掉。
 
 ## DirectML 算子级事实（实测，别重复试错）
 

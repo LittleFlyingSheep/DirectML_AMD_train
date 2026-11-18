@@ -34,7 +34,7 @@ DML = torch.device("privateuseone:0")
 DEV = torch.device("cpu") if MODE == "cpu" else DML
 
 from ultralytics.utils.loss import v8DetectionLoss
-from directml_amd_train import selftest as st
+from Direct_AMD_train import selftest as st
 
 torch.manual_seed(3)
 X = torch.rand(8, 3, 512, 512)

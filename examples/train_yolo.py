@@ -3,7 +3,7 @@
 
     python examples/train_yolo.py --data path/to/data.yaml --epochs 25
 
-关键只有一句：enable_directml_amd() 必须在 import ultralytics 之前调用。
+关键只有一句：enable() 必须在 import ultralytics 之前调用。
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from directml_amd_train import enable_directml_amd, train_yolo  # noqa: E402
+from Direct_AMD_train import enable, train_yolo  # noqa: E402
 
 
 def main() -> int:
@@ -29,7 +29,7 @@ def main() -> int:
     args = ap.parse_args()
 
     # 1) 先打补丁（必须早于 import ultralytics）
-    enable_directml_amd()
+    enable()
 
     # 2) 再训练
     train_yolo(

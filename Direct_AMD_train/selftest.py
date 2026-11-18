@@ -6,7 +6,7 @@
 
 用法::
 
-    python -m directml_amd_train doctor
+    python -m Direct_AMD_train doctor
 """
 from __future__ import annotations
 
@@ -73,9 +73,9 @@ def check_gradient_alignment(verbose: bool = True, nc: int = 2,
     """
     import torch
 
-    from ._patches import enable_directml_amd
+    from ._patches import enable
 
-    enable_directml_amd(verbose=False)
+    enable(verbose=False)
 
     torch.manual_seed(3)
     x_cpu = torch.rand(batch, 3, imgsz, imgsz)
