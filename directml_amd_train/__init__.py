@@ -42,7 +42,7 @@ from ._patches import (
 from .selftest import check_gradient_alignment
 from .trainer import export_onnx, train_yolo
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 __all__ = [
     "enable_directml_amd",

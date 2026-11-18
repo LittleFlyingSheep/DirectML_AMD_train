@@ -327,6 +327,102 @@ def test_flat_index_falls_back_to_native():
         assert torch.allclose(x[mask].cpu(), base[mask.cpu()])
 
 
+def test_flat_index_zero_size_tail_matches_cpu():
+    """0 尺寸尾维（0 列）的张量做高级索引：不能除零崩溃，结果要与 CPU 一致。
+
+    ultralytics 的 NMS 里会出现 0 列的 mask 张量。补丁 12 折算扁平偏移时
+    算出尾部维度乘积 P = 0，接着去算 s % P，直接 ZeroDivisionError 把训练打崩。
+    这里锁住「回退原生实现」这条路：DirectML 原生 aten::index 对 0 列张量
+    是正确的，输出 shape 与 CPU 相同。
+    """
+    import torch
+    torch.manual_seed(0)
+
+    base = torch.randn(8, 5376, 0)
+    i0 = torch.randint(0, 8, (75,))
+    i1 = torch.randint(0, 5376, (75,))
+
+    shapes = {}
+    for dev in ("cpu", DML):
+        x = base.to(dev)
+        out = x[i0.to(dev), i1.to(dev)]
+        shapes[dev] = tuple(out.shape)
+        assert out.numel() == 0
+    assert shapes["cpu"] == (75, 0)
+    assert shapes[DML] == shapes["cpu"], "0 列张量的索引结果对不上: %s" % shapes
+
+
+def test_flat_index_empty_source_raises_index_error():
+    """源张量为空（shape (0, 5)）时索引要报越界，不能读到野内存。
+
+    展平之后一个元素都没有，gather 的下标必然越界；
+    原生实现按 PyTorch 语义报 IndexError，补丁这边必须保持一致。
+    """
+    import torch
+    for dev in ("cpu", DML):
+        x = torch.randn(0, 5, device=torch.device(dev))
+        idx = torch.zeros(3, dtype=torch.int64, device=torch.device(dev))
+        with pytest.raises(IndexError):
+            x[idx]
+
+
+def test_flat_index_empty_index_matches_cpu():
+    """空索引张量：输出必然是空的，形状要与 CPU 一致。"""
+    import torch
+    for dev in ("cpu", DML):
+        x = torch.randn(8, 5376, device=torch.device(dev))
+        idx = torch.zeros(0, dtype=torch.int64, device=torch.device(dev))
+        out = x[idx]
+        assert tuple(out.shape) == (0, 5376)
+
+
+def test_ultralytics_nms_zero_column_mask_no_crash():
+    """ultralytics 验证阶段的 NMS：0 列 mask 不能把补丁打崩。
+
+    ultralytics/utils/nms.py 里 extra == 0（没有 mask 系数 / 关键点通道）时：
+
+        box, cls, mask = x.split((4, nc, extra), 1)   # mask 是 (n, 0)
+
+    multi_label 分支里的 mask[i] 是对 0 列张量的高级索引，
+    补丁 12 折算扁平偏移时算出尾部维度乘积 P = 0，去算 s % P 就直接除零崩溃。
+    detect/val.py 的验证阶段正好走这条分支（multi_label=True），
+    所以「第 1 轮验证时被打崩」就是这么来的。
+    """
+    import torch
+
+    from ultralytics.utils.nms import non_max_suppression
+
+    torch.manual_seed(0)
+    nc, nb = 2, 500
+
+    # 预测张量在 CPU 上造好再搬到显卡：DirectML 上对同一个张量连续做
+    # 跨步原地写（t[:, k, :] = v）只有第一次生效，后续会静默失效，
+    # 在显卡上现造会把数据造坏。
+    base = torch.zeros(1, 4 + nc, nb)
+    base[:, 0, :] = 10.0   # cx
+    base[:, 1, :] = 10.0   # cy
+    base[:, 2, :] = 8.0    # w
+    base[:, 3, :] = 8.0    # h
+    base[:, 4, :] = 0.9    # class 0
+    base[:, 5, 10:] = 0.8  # class 1
+
+    shapes = {}
+    classes = {}
+    for dev in ("cpu", DML):
+        pred = base.to(torch.device(dev))
+        out = non_max_suppression(pred, conf_thres=0.25, iou_thres=0.45,
+                                  multi_label=True, max_det=300, nc=nc)
+        assert len(out) == 1
+        shapes[dev] = tuple(out[0].shape)
+        classes[dev] = out[0][:, 5].tolist()
+    assert shapes[DML][1] == 6, "NMS 输出列数不对: %s" % shapes[DML]
+    assert shapes[DML][0] > 0, "NMS 一个框都没留: %s" % shapes[DML]
+    assert shapes[DML] == shapes["cpu"], (
+        "NMS 结果和 CPU 对不上: %s vs %s" % (shapes[DML], shapes["cpu"]))
+    assert classes[DML] == classes["cpu"], (
+        "NMS 输出的类别和 CPU 对不上: %s vs %s" % (classes[DML], classes["cpu"]))
+
+
 def test_flat_index_bounds_check_can_be_disabled():
     """verify_bounds=False 只是关掉越界检查，取值语义不变。"""
     import torch

@@ -296,6 +296,47 @@ patch_flat_index(verify_bounds=False)     # 只省掉越界检查，取值语义
 
 ---
 
+### 补丁 12 的一次翻车：0 列张量把训练打崩（已修）
+
+这一条是在「悠悠机器人视觉数据集标注 Web UI」那个会话里发现的：
+训练跑到第 1 轮验证时，被补丁库自己打崩了 ——
+`ZeroDivisionError: integer modulo by zero`。
+
+**根因**：ultralytics 的 NMS 在「没有 mask 系数 / 关键点通道」的时候，
+会把预测张量拆成 `box, cls, mask = x.split((4, nc, extra), 1)`，
+其中 `extra == 0` 分出来的 `mask` 是 **`(n, 0)` 的 0 列张量**。
+`multi_label` 分支里的 `mask[i]` 就是对 0 列张量的高级索引，
+而 `detect/val.py` 的验证阶段正好走这条分支（`multi_label=True`）：
+
+~~~python
+# ultralytics/utils/nms.py
+box, cls, mask = x.split((4, nc, extra), 1)      # extra == 0 -> mask 是 (n, 0)
+x = torch.cat((box[i], x[i, 4 + j, None], j[:, None].float(), mask[i]), 1)
+                                                             ^^^^^^
+~~~
+
+补丁 12 折算扁平偏移时算出「尾部保留维度的乘积」`P = 0`，
+紧接着去算 `s % P` —— 除零。
+
+**修法**：这类索引根本不该交给改写后的路径，直接回退原生实现。
+`gather` 表达不出「空输出」，原生 `aten::index` 的语义反而是完整的 ——
+实测原生 DirectML 对 0 列张量返回 `(75, 0)`，与 CPU 完全一致。
+顺带修掉两个同类边角：
+
+* 源张量为空（`shape (0, 5)`）时展平后一个元素都没有，`gather` 下标必然越界
+  → 回退原生（原生按 PyTorch 语义报 `IndexError`，与 CPU 一致）。
+* 索引张量为空时输出必然是空的，而 DirectML 的 `gather` 处理空下标会抛
+  `UnicodeDecodeError` → 回退原生。
+
+**触发条件**：类别数 ≥ 2（`multi_label &= nc > 1`，单类别时这条分支根本不走）。
+所以单类别数据集训练碰不到，多类别数据集第 1 轮验证必崩。
+
+**验证**：修复前 ultralytics 真实的 `non_max_suppression` 直接除零崩溃，
+修复后同一条路径正常返回 300 个检测框，训练 + 验证全程跑通。
+回归测试：`tests/test_patches.py::test_ultralytics_nms_zero_column_mask_no_crash`。
+
+---
+
 ---
 
 ## 损失计算在哪儿算
@@ -372,6 +413,12 @@ pytest tests/ -v
 * DirectML 不支持 `autocast`，所以 `amp` 一律关掉（混合精度在这条路上没有加速）。
 * `t[i:j] = v` 这种**切片**赋值在 DirectML 上仍然会错位（补丁 11 只修了标量槽位）。
   ultralytics 的损失拼装里没有这种写法，训练不受影响；自己写代码时避开即可。
+* 更阴的一个坑：DirectML 上**对同一个张量连续做跨步原地写**
+  （`t[:, k, :] = v` 写不同的 k），**只有第一次生效**，后面几次静默失效
+  （强制同步也救不回来，不同张量则互不影响）。
+  合成测试数据时很容易中招 —— 在显卡上 `pred[:, 4, :] = 0.9` 之后再写
+  `pred[:, 5, 10:] = 0.8`，前者的值会没了。
+  稳妥做法：数据在 CPU 上造好再 `.to(device)`，或者先写进新张量再整体搬过去。
 * 标签索引用到的 `unique` 还是会回 CPU 算 —— 张量很小，不是瓶颈。
 * DirectML 上「连续反复计算同一个损失」（中间没有任何 CPU 工作插进来）
   会把显卡命令队列卡死 —— 下一次前向的第一个算子永远不返回，
@@ -382,6 +429,9 @@ pytest tests/ -v
 * 补丁 12 只接管「连续的索引张量前缀 + 尾部整数」这一种形态
   （损失里的 9 处都属于这一类）。切片、bool 掩码、0 维索引张量、
   非连续张量会回退原生实现 —— **数值仍然正确**，只是没吃到并行加速。
+* 补丁 12 遇到空张量（0 尺寸尾维）或空索引也会回退原生实现：
+  尾部维度乘积为 0 时折算偏移会除零崩溃，而 `gather` 表达不出空输出
+  （ultralytics 的 NMS 里就有 0 列的 mask 张量，详见上面的说明）。
 * 补丁 12 的越界检查是一次 DML→CPU 同步（每个索引点约 0.3 ms）。
   嫌慢可以 `patch_flat_index(verify_bounds=False)` 关掉，
   但那样越界索引会读到野内存而不是报错。

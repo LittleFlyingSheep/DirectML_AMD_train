@@ -51,6 +51,11 @@ gather 的输出形状等于 index 的形状（不是输入的形状），
 
   * 非连续张量回退原生：折算偏移的前提是行主序连续内存。
   * 0 维索引张量在 PyTorch 里等价于整数下标，这里直接回退原生实现。
+  * 空张量回退原生：尾部保留的维度里有 0 时 P = 0，
+    折算偏移要算 s % P 会直接除零；而且 gather 表达不出空输出。
+    （ultralytics 的 NMS 里就有一个 0 列的 mask 张量会走到这里。）
+  * 空索引张量回退原生：输出必然是空的，
+    而 DirectML 的 gather 处理空下标会抛 UnicodeDecodeError。
   * 索引张量必须和被索引张量在同一个设备上。
   * 越界检查是逐维的（和 PyTorch 一样），
     一次同步会打断显卡的流水线，实测每个索引点约 0.3 ms。
@@ -117,6 +122,11 @@ def _plan(t, index):
                 return None
             if it.device != t.device:
                 return None
+            if it.numel() == 0:
+                # 空索引 -> 输出必然是空的。
+                # DirectML 的 gather 处理空下标会直接抛 UnicodeDecodeError
+                # （原生 aten::index 反而正常），这种情况回退原生实现。
+                return None
             n_tensor += 1
         elif isinstance(it, int) and not isinstance(it, bool):
             continue
@@ -136,10 +146,23 @@ def _plan(t, index):
     m = len(items) - k
     if k + m > n:
         return None
+
+    # 源张量本身是空的（任意一维为 0）：展平之后没有元素可取，
+    # gather 的下标必然越界，原生实现则按 PyTorch 语义报 IndexError
+    # 或者返回空结果。老老实实回退原生，别自己造语义。
+    if t.numel() == 0:
+        return None
+
     tail = shape[k + m:]           # 还会留在输出里的维度
     P = 1
     for d in tail:
         P *= d
+    if P == 0:
+        # 留在输出里的尾部维度里有 0，输出必然是空的。
+        # 下面要算 s % P / s // P，P == 0 会直接除零崩溃
+        # （ultralytics 的 NMS 里就有一个 0 列的 mask 张量会走到这里）。
+        # gather 也表达不出「空输出」，这种情况回退原生实现。
+        return None
 
     # 连续张量的行主序步长
     strides = [1] * n
