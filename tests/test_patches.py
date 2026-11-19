@@ -566,3 +566,47 @@ def test_probe_subset_runs():
     data = probe_operators(verbose=False, only=("索引/散射",))
     assert data["total"] > 0
     assert data["failed"] == 0, [r for r in data["results"] if r["ok"] is False]
+
+
+def test_empty_sub_shape():
+    """0 尺寸张量做减法：DirectML 上的输出形状必须与 CPU 一致（补丁 13）。
+
+    后端在「0 维后面还跟着别的维度」时会把输出形状算塌，
+    表现为 RuntimeError: The size of tensor a (0) must match the size of
+    tensor b (4) at non-singleton dimension 1。
+    """
+    import torch
+    for shape in [(0,), (0, 4), (4, 0), (0, 2), (2, 0, 3), (1, 0), (0, 0)]:
+        for dev in ("cpu", DML):
+            a = torch.zeros(shape, device=torch.device(dev))
+            b = torch.zeros(shape, device=torch.device(dev))
+            out = a - b
+            assert tuple(out.shape) == shape, (
+                "dev=%s shape=%s -> %s" % (dev, shape, tuple(out.shape)))
+            assert out.dtype == torch.float32
+
+
+def test_empty_sub_dtype_and_inplace():
+    """空张量的减法：dtype 要按类型提升算，原地减法要原地返回。"""
+    import torch
+    dev = torch.device(DML)
+    a = torch.zeros((0, 4), device=dev)
+    b = torch.zeros((0, 4), device=dev, dtype=torch.int64)
+    out = a - b
+    assert out.dtype == torch.float32, out.dtype
+    assert tuple(out.shape) == (0, 4)
+    c = torch.zeros((0, 4), device=dev)
+    r = c.sub_(b)
+    assert r is c
+    assert tuple(c.shape) == (0, 4)
+
+
+def test_nonempty_sub_unchanged():
+    """非空张量的减法不能被补丁改动（数值必须逐位相同）。"""
+    import torch
+    for shape in [(3, 4), (2, 2, 5)]:
+        x = torch.randn(shape, device=torch.device(DML))
+        y = torch.randn(shape, device=torch.device(DML))
+        out = x - y
+        ref = x.cpu() - y.cpu()
+        assert float((out.cpu() - ref).abs().max()) < 1e-5

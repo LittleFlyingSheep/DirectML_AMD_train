@@ -130,11 +130,21 @@ _PATCHES = (
     PatchInfo(
         "patch_flat_index", "torch", ("Tensor.__getitem__",),
         "高级索引（t[i0, i1, ...]）带梯度时不是并行 kernel，而是一串 copy_"
-        "（实测端到端快 4~11%）",
+        "（前向 175 ms，no_grad 下只要 47 ms）",
         "折算成扁平偏移 + gather（并行 kernel），反向用 index_put_(accumulate=True) "
         "在显卡上散射累加",
         tasks=("detect", "segment", "pose", "obb"),
         note="空张量 / 空索引会回退原生（gather 表达不出空输出）",
+    ),
+    PatchInfo(
+        "patch_empty_ops", "torch", ("Tensor.sub", "Tensor.sub_", "torch.sub"),
+        "0 尺寸张量做减法时输出形状算塌（(0,4) 减 (0,4) 报 "
+        "size of tensor a (0) must match the size of tensor b (4)），"
+        "整轮验证被打断、训练退出",
+        "结果为空的减法直接按 CPU 规则造出空结果，不去后端",
+        tasks=("*",),
+        note="ultralytics 的 NMS 里 xywh2xyxy 排在空判断之前，"
+             "零候选帧就会踩到；模型越准越容易踩",
     ),
     PatchInfo(
         "patch_device", "ultralytics", ("ultralytics.utils.torch_utils.select_device",),

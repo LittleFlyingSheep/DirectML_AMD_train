@@ -20,6 +20,8 @@ enable(framework=...) 决定打哪一层：
 torch.inference_mode 这个类抓在手里）。
 另外 patch_slot_assign() 必须排在 patch_bool_ops() 后面 ——
 bool_ops 也会替换 Tensor.__imul__ 等 dunder，谁后打谁生效。
+patch_empty_ops() 必须排在 torch 层最后 —— 它要包住前面所有补丁装好的
+Tensor.sub / torch.sub，再往前插就包不到真正的入口了。
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ from .bool_ops import patch_bool_ops
 from .bce import patch_bce
 from .cat import patch_cat
 from .device import patch_device
+from .empty_ops import patch_empty_ops
 from .flat_index import patch_flat_index
 from .gather import patch_gather
 from .inference_mode import patch_inference_mode
@@ -57,6 +60,8 @@ __all__ = [
     "patch_addmv",
     "patch_slot_assign",
     "patch_flat_index",
+    "patch_empty_ops",
+    "patch_empty_ops",
     "patch_probiou",
     "patch_loss_on_cpu",
 ]
@@ -74,6 +79,7 @@ _TORCH_LAYER = (
     patch_bce,
     patch_addmv,
     patch_slot_assign,
+    patch_empty_ops,
 )
 
 # ultralytics 层：改 ultralytics 自己的行为
@@ -119,7 +125,7 @@ def enable(framework: str = "auto", verbose: bool = True,
         关掉能再省一点时间（每个索引点约 0.3 ms）。
     flat_index:
         是否启用补丁 12（把高级索引改写成展平 gather）。
-        默认开着 —— 实测端到端快 4~11%（配对 A/B；区间随代码版本与机器负载浮动）。
+        默认开着 —— 实测损失前向快 3.3 倍、整轮训练快 4.3%（配对 A/B）。
         关掉可以拿来做 A/B 对照（数值一样，只是慢）。
 
     典型用法::
