@@ -7,8 +7,8 @@ DirectML 的 BatchNorm 实现会原地写缓冲区，而 PyTorch 禁止对 infer
 
     RuntimeError: Cannot set version_counter for inference tensor
 
-修法：把 torch.inference_mode 换成空上下文。梯度照旧由 ultralytics 同层的
-torch.no_grad() 关掉，语义上等价于「关梯度但不进 inference 模式」。
+修法：用 torch.no_grad() 关梯度，避免创建 inference tensor。
+显式传 mode=False 时保留 PyTorch 的原始行为。
 
 注意时机：ultralytics 的 smart_inference_mode 装饰器在 import 时就把
 torch.inference_mode 这个类抓在手里，之后再改 torch.inference_mode 不起作用。
@@ -21,5 +21,15 @@ def patch_inference_mode() -> None:
     """替换 torch.inference_mode（必须在 import ultralytics 之前调用）。"""
     import torch
 
-    # no_grad 既能做上下文管理器，也能当装饰器用，正好顶替 inference_mode
-    torch.inference_mode = lambda mode=True, *a, **kw: torch.no_grad()
+    from ._once import already_patched, mark
+
+    original = torch.inference_mode
+    if already_patched(original):
+        return
+
+    def inference_mode(mode=True):
+        if not isinstance(mode, bool):
+            return torch.no_grad()(mode)
+        return torch.no_grad() if mode else original(False)
+
+    torch.inference_mode = mark(inference_mode)

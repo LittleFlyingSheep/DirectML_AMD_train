@@ -10,21 +10,25 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-__all__ = ["train_yolo", "export_onnx", "resolve_device", "environment_info"]
+__all__ = ["train_yolo", "predict_yolo", "export_onnx", "resolve_device", "environment_info"]
 
 
 def resolve_device(device: Any = "dml"):
     """把用户写的 device 规格解析成 torch.device。
 
     - "dml" / "directml" / "privateuseone" -> privateuseone:0
+    - "privateuseone:N"                   -> 指定的 DirectML 适配器
     - "cpu"                               -> cpu
     - 其它原样交给 ultralytics（"0" / "cuda:0" / ...）
     """
     import torch
 
     s = str(device).strip().lower()
-    if s in ("dml", "directml", "privateuseone", "privateuseone:0", "gpu", "amd"):
-        return torch.device("privateuseone:0")
+    if s in ("dml", "directml", "privateuseone", "gpu", "amd") or s.startswith("privateuseone:"):
+        import torch_directml
+
+        index = torch.device(s).index if ":" in s else None
+        return torch_directml.device(0 if index is None else index)
     if s == "cpu":
         return torch.device("cpu")
     return device
@@ -32,26 +36,20 @@ def resolve_device(device: Any = "dml"):
 
 def environment_info() -> Dict[str, Any]:
     """收集环境信息，给 doctor 命令用。"""
+    from importlib.metadata import PackageNotFoundError, version
+
     info: Dict[str, Any] = {}
-    try:
-        import torch
-        info["torch"] = torch.__version__
-    except Exception as e:  # pragma: no cover
-        info["torch"] = "未安装 (%s)" % e
-    try:
-        import ultralytics
-        info["ultralytics"] = ultralytics.__version__
-    except Exception as e:
-        info["ultralytics"] = "未安装 (%s)" % e
+    for package in ("torch", "ultralytics", "torch-directml"):
+        try:
+            info[package.replace("-", "_")] = version(package)
+        except PackageNotFoundError:
+            info[package.replace("-", "_")] = "未安装"
     try:
         import torch_directml
-        info["torch_directml"] = getattr(torch_directml, "__version__", "已安装")
-        try:
-            info["device_name"] = torch_directml.device_name(0)
-        except Exception as e:
-            info["device_name"] = "读取失败 (%s)" % e
+
+        info["device_name"] = torch_directml.device_name(0).rstrip("\0") or "无可用设备"
     except Exception as e:
-        info["torch_directml"] = "未安装 (%s)" % e
+        info["device_name"] = "读取失败 (%s)" % e
     return info
 
 
@@ -90,7 +88,7 @@ def train_yolo(
 
     dev = resolve_device(device)
     if getattr(dev, "type", "") == "privateuseone":
-        enable(loss_on_cpu=loss_on_cpu,
+        enable(framework="ultralytics", loss_on_cpu=loss_on_cpu,
                             verify_index_bounds=verify_index_bounds,
                             flat_index=flat_index)
 
@@ -114,19 +112,28 @@ def train_yolo(
     if project:
         train_kwargs["project"] = project
     train_kwargs["name"] = name
-    # ultralytics 各版本参数略有差异，传不认识的参数会报错，这里挑着传
-    safe = ("mosaic", "mixup", "degrees", "scale", "translate", "fliplr", "flipud",
-            "hsv_h", "hsv_s", "hsv_v", "copy_paste", "close_mosaic", "optimizer",
-            "lr0", "lrf", "cos_lr", "val", "plots", "save_period", "cache",
-            "single_cls", "rect", "resume", "pretrained")
-    for k in safe:
-        if k in kwargs:
-            train_kwargs[k] = kwargs[k]
+    train_kwargs.update(kwargs)
+    if getattr(dev, "type", "") == "privateuseone":
+        train_kwargs["amp"] = False
 
     print("[Direct_AMD_train] 开始训练: model=%s device=%s" % (model, dev))
     m = YOLO(model)
     m.train(**train_kwargs)
     return m
+
+
+def predict_yolo(source: Any, *, model: str = "yolov8s.pt", device: Any = "dml", **kwargs: Any):
+    """用 PyTorch .pt 权重预测，返回 Ultralytics Results 列表或迭代器。"""
+    from ._patches import enable
+
+    dev = resolve_device(device)
+    if getattr(dev, "type", "") == "privateuseone":
+        enable(framework="ultralytics")
+        kwargs["quantize"] = 32
+
+    from ultralytics import YOLO
+
+    return YOLO(model).predict(source=source, device=dev, **kwargs)
 
 
 def export_onnx(
@@ -144,21 +151,15 @@ def export_onnx(
 
     os.makedirs(out, exist_ok=True)
     target = os.path.join(out, "model.onnx")
-    YOLO(weights).export(format="onnx", imgsz=imgsz, opset=opset,
-                          simplify=simplify, dynamic=dynamic, nms=nms,
-                          device="cpu")
-    # ultralytics 把 onnx 放在权重旁边，搬过来
+    exported = YOLO(weights).export(format="onnx", imgsz=imgsz, opset=opset,
+                                    simplify=simplify, dynamic=dynamic, nms=nms,
+                                    device="cpu")
     import shutil
-    candidates = [
-        os.path.join(os.path.dirname(os.path.abspath(weights)), "model.onnx"),
-        os.path.join(os.path.dirname(os.path.abspath(weights)), "best.onnx"),
-    ]
-    for c in candidates:
-        if os.path.isfile(c) and os.path.abspath(c) != os.path.abspath(target):
-            shutil.copyfile(c, target)
-            break
-    if not os.path.isfile(target):
-        raise FileNotFoundError("导出失败：没找到 onnx 文件（检查权重路径）")
+
+    if not os.path.isfile(exported):
+        raise FileNotFoundError("导出失败：未生成 %s" % exported)
+    if not os.path.exists(target) or not os.path.samefile(exported, target):
+        shutil.copyfile(exported, target)
     print("[Direct_AMD_train] ONNX 已导出: %s（%d 字节）"
           % (target, os.path.getsize(target)))
     return target

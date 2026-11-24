@@ -4,8 +4,7 @@
 ultralytics 的 select_device 只认 cpu/cuda/npu/xpu，
 传 privateuseone:0 会被当成 cuda 报 "Invalid CUDA device"。
 
-这里把 select_device 换掉：遇到 privateuseone 就直接返回
-torch.device('privateuseone:0')，其它设备走原来的逻辑。
+这里把 select_device 换掉：保留 privateuseone 的设备编号，其它设备走原来的逻辑。
 """
 from __future__ import annotations
 
@@ -25,9 +24,9 @@ _MODULES = (
 
 
 def patch_device() -> None:
-    import torch
     from ultralytics.utils import torch_utils
 
+    from ..trainer import resolve_device
     from ._once import already_patched, mark
 
     if already_patched(torch_utils.select_device):
@@ -37,8 +36,9 @@ def patch_device() -> None:
 
     def select_device(device="", *args, **kw):
         # 签名随 ultralytics 版本变，这里一律透传，只把 privateuseone 拦下来
-        if "privateuseone" in str(device).lower():
-            return torch.device("privateuseone:0")
+        spec = str(device).strip().lower()
+        if spec == "privateuseone" or spec.startswith("privateuseone:"):
+            return resolve_device(device)
         return _orig(device, *args, **kw)
 
     torch_utils.select_device = mark(select_device)

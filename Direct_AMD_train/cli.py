@@ -72,10 +72,20 @@ def _cmd_export(args) -> int:
     return 0
 
 
+def _cmd_predict(args) -> int:
+    from .trainer import predict_yolo
+
+    for _ in predict_yolo(args.source, model=args.weights, device=args.device,
+                          imgsz=args.imgsz, save=True, stream=True,
+                          project=args.project, name=args.name):
+        pass
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="Direct_AMD_train",
-        description="让 PyTorch / ultralytics 在 AMD 显卡（DirectML / DirectX 12）上正常训练")
+        description="在 AMD 显卡（DirectML / DirectX 12）上运行 PyTorch 训练和推理")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor", help="环境信息 + 梯度数值对齐自检")
@@ -105,6 +115,15 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--patience", type=int, default=15)
     t.add_argument("--seed", type=int, default=0)
     t.set_defaults(func=_cmd_train)
+
+    pred = sub.add_parser("predict", help="用 YOLO .pt 权重预测并保存结果")
+    pred.add_argument("--source", required=True)
+    pred.add_argument("--weights", default="yolov8s.pt")
+    pred.add_argument("--device", default="dml")
+    pred.add_argument("--imgsz", type=int, default=640)
+    pred.add_argument("--project", default=None)
+    pred.add_argument("--name", default=None)
+    pred.set_defaults(func=_cmd_predict)
 
     e = sub.add_parser("export", help="导出 ONNX")
     e.add_argument("--weights", required=True)

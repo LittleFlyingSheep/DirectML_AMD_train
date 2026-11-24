@@ -12,10 +12,10 @@ Windows 上没有 ROCm 的 AMD 卡（GCN5 / Vega 20 / gfx906 这类），PyTorch
 
 这个库把这些差异一条条补上，并且：
 
-* 用 **36 条可复现的回归测试**守住 —— 同一份输入，CPU 与 DirectML 必须一致；
-* 自带 **算子能力探测**（`probe`）—— 换 torch-directml 版本时跑一遍，就知道有没有新的坑；
-* 自带 **梯度数值对齐自检**（`doctor`）—— 训练能不能收敛，看它就知道；
-* 补丁**分两层**：torch 层与框架无关（任何 PyTorch 项目都能用），ultralytics 层按需开启。
+* 回归测试比较 CPU 和 DirectML 的损失、梯度、参数更新和推理输出。
+* `probe` 验证示例算子能否执行，`doctor` 比较 YOLOv8s 的前向损失和逐参数梯度。
+* torch 层提供 PyTorch 算子补丁，ultralytics 层提供 YOLO 集成。
+* v1.0 提供 YOLO `.pt` 推理的 Python 与命令行入口。推理使用 FP32。
 
 ---
 
@@ -46,15 +46,16 @@ Windows 上没有 ROCm 的 AMD 卡（GCN5 / Vega 20 / gfx906 这类），PyTorch
 ## 安装
 
 ~~~powershell
-# 训练环境（建议独立于日常环境）
-pip install torch torchvision ultralytics
-pip install torch-directml
+# YOLO 训练、推理和回归测试
+python -m pip install -e ".[train,test]"
 
-# 本体
-pip install -e .
+# 纯 PyTorch 项目
+python -m pip install -e ".[dml]"
 ~~~
 
-torch-directml 只发 Windows 轮子，且需要 Python 3.8+。
+v1.0 在 Windows / Radeon Pro VII / Python 3.11 上验证。安装额外依赖会选择
+`torch-directml 0.2.5.dev240914`，它要求 PyTorch 2.4.1 和 torchvision 0.19.1。
+YOLO 集成使用 Ultralytics 8.4.213。ONNX 导出另需 `onnx`，简化另需 `onnxslim`。
 
 ---
 
@@ -64,35 +65,38 @@ torch-directml 只发 Windows 轮子，且需要 Python 3.8+。
 
 ~~~powershell
 # 环境自检 + 梯度数值对齐自检（强烈建议先跑这个）
-python -m Direct_AMD_Train doctor
+python -m Direct_AMD_train doctor
 
 # 算子能力探测：DirectML 上哪些算子能用、哪些被补丁救回来了
-python -m Direct_AMD_Train probe
-python -m Direct_AMD_Train probe --native      # 测原生能力（不打补丁）
+python -m Direct_AMD_train probe
+python -m Direct_AMD_train probe --native      # 测原生能力（不打补丁）
 
 # 补丁清单：每条补丁修的是什么问题、属于哪一层
-python -m Direct_AMD_Train patches
+python -m Direct_AMD_train patches
 
 # 训练
-python -m Direct_AMD_Train train --data path/to/data.yaml --epochs 25 --device dml
+python -m Direct_AMD_train train --data path/to/data.yaml --epochs 25 --device dml
+
+# 用 .pt 权重推理，保存带检测框的结果
+python -m Direct_AMD_train predict --weights yolov8s.pt --source image.jpg --device dml
 
 # 导出 ONNX
-python -m Direct_AMD_Train export --weights runs/exp/weights/best.pt --out out/
+python -m Direct_AMD_train export --weights runs/exp/weights/best.pt --out out/
 ~~~
 
 ### 代码里用
 
 ~~~python
-from Direct_AMD_Train import enable, train_yolo
+from Direct_AMD_train import predict_yolo, train_yolo
 
-enable()          # 必须在 import ultralytics 之前
 train_yolo("data.yaml", epochs=25, device="dml")
+results = predict_yolo("image.jpg", model="yolov8s.pt", device="dml")
 ~~~
 
 或者自己接管：
 
 ~~~python
-from Direct_AMD_Train import enable
+from Direct_AMD_train import enable
 enable()
 from ultralytics import YOLO          # 补丁打完之后再 import
 
@@ -108,12 +112,25 @@ YOLO("yolov8s.pt").train(data="data.yaml", epochs=25,
 
 ### 纯 PyTorch 项目（不装 ultralytics）
 
-库的 torch 层与框架无关，任何在 DirectML 上跑 PyTorch 的项目都能用：
+下面用纯 PyTorch 走一遍 FP32 训练更新与推理。补丁在进程内生效。
 
 ~~~python
-from Direct_AMD_Train import enable
+import torch
+from Direct_AMD_train import enable, resolve_device
 
-enable(framework="torch")     # 只打 torch 层，绝不碰 ultralytics
+enable(framework="torch")
+device = resolve_device("dml")
+model = torch.nn.Linear(4, 2).to(device)
+x = torch.randn(3, 4).to(device)
+target = torch.randn(3, 2).to(device)
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+optimizer.zero_grad(set_to_none=True)
+torch.nn.functional.mse_loss(model(x), target).backward()
+optimizer.step()
+
+model.eval()
+with torch.no_grad():
+    prediction = model(x).cpu()
 ~~~
 
 | `framework` | 打哪些补丁 |
@@ -127,13 +144,13 @@ enable(framework="torch")     # 只打 torch 层，绝不碰 ultralytics
 
 ## 能力矩阵
 
-### 算子能力（`python -m Direct_AMD_Train probe`）
+### 算子能力（`python -m Direct_AMD_train probe`）
 
 本机（torch-directml 0.2.5.dev240914）实测 95 项常用算子：
 
 | | 通过 | 失败 |
 | --- | --- | --- |
-| 原生 DirectML | 88 | 3 失败 + 4 会炸/会崩（已跳过） |
+| 原生 DirectML | 89 | 2 失败 + 4 个已知异常用例跳过 |
 | 打上本库的补丁后 | **94** | 1（`conv3d`） |
 
 原生跑不通、打完补丁能跑的那些：
@@ -151,13 +168,12 @@ enable(framework="torch")     # 只打 torch 层，绝不碰 ultralytics
 以下算子**功能正常但会回落 CPU**（有 warning，不影响正确性，只是慢）：
 `addmv`、`log_sigmoid_forward`（BCE 内部）、`std`、`roll`、`take`、`unique_consecutive`。
 
-唯一真正用不了的：**`conv3d`**（DirectML 的卷积只接受 4 维输入），
-所以 3D 卷积 / 视频类模型本库暂不支持。
+这 95 个用例中，补丁启用后仍失败的是 **`conv3d`**。当前后端的卷积只接受 4 维输入。
 
 ### 任务支持（实测梯度对齐）
 
 每个任务都用 ultralytics 官方模型 + 官方损失，跑一次真实前向 + 反向，
-与 CPU 逐参数比对（`python -m Direct_AMD_Train doctor` 是 detect 任务的加强版）：
+与 CPU 逐参数比对（`python -m Direct_AMD_train doctor` 是 detect 任务的加强版）：
 
 | 任务 | loss（CPU vs DirectML） | 梯度聚合相对误差 | 被清零的参数 |
 | --- | --- | --- | --- |
@@ -181,7 +197,7 @@ loss 曲线看着正常但模型就是学不会那一类 —— 这正是本库�
 | **torch 层** | torch / torch_directml 自己的算子语义 | 任何在 DirectML 上跑 PyTorch 的项目 |
 | **ultralytics 层** | ultralytics 的内部行为（设备选择、显存日志、OBB 的 probiou、损失搬 CPU） | 只有用 ultralytics 时 |
 
-完整清单用 `python -m Direct_AMD_Train patches` 打出来，库里也有一份注册表
+完整清单用 `python -m Direct_AMD_train patches` 打出来，库里也有一份注册表
 （`Direct_AMD_train/registry.py`），每条补丁都记着：影响的算子、症状、修法、适用任务。
 
 | # | 补丁 | 层 | DirectML 的问题 | 处理方式 |
@@ -241,7 +257,7 @@ DML  -> x.grad = [0, 1, 1]   清零的成了槽位 0，槽位 1 反而留着
 视图上的原地算子（`t[i] *= v`）改成「out-of-place 计算 + no_grad 写回」，
 干脆不产生 CopySlices 节点。
 
-修完之后损失可以整段留在显卡上，梯度与 CPU 对齐（`python -m Direct_AMD_Train doctor`）：
+修完之后损失可以整段留在显卡上，梯度与 CPU 对齐（`python -m Direct_AMD_train doctor`）：
 
 ~~~
 CPU  loss = [4.937076, 7.984281, 8.640423]
@@ -429,11 +445,11 @@ enable(loss_on_cpu=True)     # 损失回 CPU 算，模型前后向仍在显卡
 
 ---
 
-## 从 1.x 迁到 2.0
+## 从旧版 `directml_amd_train` 迁到 v1.0
 
-2.0 是**独立开发版**：包名、入口函数、补丁体系都变了。
+v1.0 是独立开发版的稳定标签，沿用开发版的包名和补丁分层。
 
-| 1.x | 2.0 |
+| 旧版 | v1.0 |
 | --- | --- |
 | `from directml_amd_train import enable_directml_amd` | `from Direct_AMD_train import enable` |
 | `python -m directml_amd_train doctor` | `python -m Direct_AMD_train doctor` |
@@ -450,7 +466,7 @@ enable(loss_on_cpu=True)     # 损失回 CPU 算，模型前后向仍在显卡
 ## 开发
 
 ~~~powershell
-# 回归测试（36 条）
+# 回归测试
 pytest tests/ -q
 
 # 环境 + 梯度对齐自检

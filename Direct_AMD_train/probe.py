@@ -77,8 +77,8 @@ def _cases():
     add(g, "index_select", lambda d: rnd(4, 4, device=d).index_select(0, _idx(d)))
     add(g, "gather", lambda d: rnd(4, 4, device=d).gather(
         1, torch.tensor([[0, 1], [2, 3]], device=d)))
-    add(g, "scatter_add_", lambda d: rnd(4, 4, device=d).clone().scatter_add_(
-        0, _idx(d), rnd(2, 4, device=d)))
+    add(g, "scatter_add_", lambda d: rnd(4, device=d).scatter_add_(
+        0, _idx(d), rnd(2, device=d)))
     add(g, "index_put_", lambda d: rnd(4, 4, device=d).clone().index_put_(
         (_idx(d),), rnd(2, 4, device=d)))
     add(g, "masked_select", lambda d: rnd(4, 4, device=d)[rnd(4, 4, device=d) > 0])
@@ -221,26 +221,27 @@ def probe_operators(native: bool = False, verbose: bool = True,
     """跑一遍算子能力探测，返回结构化结果。
 
     native=True 时**不打补丁**，测的是 DirectML 的原生能力。
-    已知会让进程崩掉的算子（原生 unique 多维 / 全等值排序）在这两种模式下
-    都跳过，避免把探测进程带走。
+    原生模式跳过已知可能导致进程崩溃的用例，须在未启用补丁的进程中运行。
 
     only 可以只跑指定分组（分组名见 OPERATOR_GROUPS），
     用来做快速抽查。
     """
     import torch
-    # 必须先 import torch_directml，privateuseone 设备才会注册上来
-    # （这跟打不打补丁无关）
-    import torch_directml  # noqa: F401
+    from ._patches import _ultralytics_installed, enable
+    from ._patches._once import already_patched
+    from .trainer import resolve_device
 
-    if not native:
-        from ._patches import enable
-        enable(framework="torch", verbose=False)
-
-    dev = torch.device(device)
+    dev = torch.device(resolve_device(device))
     cases = _cases()
     if only:
         keep = set(only)
         cases = [c for c in cases if c["group"] in keep]
+    has_ultralytics = any(c["group"] == "ultralytics" for c in cases) and _ultralytics_installed()
+    if native and already_patched(torch.inference_mode):
+        raise RuntimeError("请在未调用 enable() 的新进程中探测原生能力")
+    if not native and dev.type == "privateuseone":
+        enable(framework="ultralytics" if has_ultralytics else "torch", verbose=False)
+
     results: List[Dict[str, Any]] = []
     torch.manual_seed(0)
 
@@ -248,13 +249,20 @@ def probe_operators(native: bool = False, verbose: bool = True,
         row = {"group": c["group"], "name": c["name"],
                "ok": None, "error": "", "note": c["note"],
                "skipped": False}
-        if c["dangerous"] and native:
+        if c["group"] == "ultralytics" and not has_ultralytics:
+            row["skipped"] = True
+            row["note"] = "未安装 ultralytics"
+        elif c["dangerous"] and native and dev.type == "privateuseone":
             row["skipped"] = True
             row["note"] = (c["note"] + "；原生模式下跳过").lstrip("；")
+        if row["skipped"]:
             results.append(row)
             continue
         try:
-            c["fn"](dev)
+            output = c["fn"](dev)
+            for value in output if isinstance(output, tuple) else (output,):
+                if isinstance(value, torch.Tensor):
+                    value.cpu()  # 等待异步设备计算完成后再报告成功
             row["ok"] = True
         except Exception as e:
             row["ok"] = False

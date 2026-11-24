@@ -71,6 +71,8 @@ def check_gradient_alignment(verbose: bool = True, nc: int = 2,
 
     返回的字典里 ok 为 True 表示梯度对齐（这是训练能收敛的前提）。
     """
+    from copy import deepcopy
+
     import torch
 
     from ._patches import enable
@@ -82,11 +84,11 @@ def check_gradient_alignment(verbose: bool = True, nc: int = 2,
     batch_cpu = _make_batch()
 
     model = _build_model(nc)
+    dml_model = deepcopy(model)
     cpu_loss, cpu_grads, _cpu_loss_device = _run(model, x_cpu, batch_cpu, torch.device("cpu"))
 
-    model = model.to(torch.device("privateuseone:0"))
-    dml_loss, dml_grads, dml_loss_device = _run(model, x_cpu, batch_cpu,
-                                                torch.device("privateuseone:0"))
+    dev = torch.device("privateuseone:0")
+    dml_loss, dml_grads, dml_loss_device = _run(dml_model.to(dev), x_cpu, batch_cpu, dev)
 
     missing = [k for k in cpu_grads if k not in dml_grads]
     zero_on_dml = []
@@ -148,6 +150,6 @@ def check_gradient_alignment(verbose: bool = True, nc: int = 2,
         print("[自检] 单参数最大相对误差 %.3e（%s）" % (worst, worst_name))
         if zero_on_dml:
             print("[自检] DirectML 上梯度被清零的参数: %s" % zero_on_dml[:5])
-        print("[自检] 结论: %s" % ("梯度对齐，训练可收敛" if result["ok"]
+        print("[自检] 结论: %s" % ("本次梯度对齐" if result["ok"]
                                  else "梯度未对齐，训练不会收敛"))
     return result

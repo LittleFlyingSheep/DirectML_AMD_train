@@ -61,7 +61,6 @@ __all__ = [
     "patch_slot_assign",
     "patch_flat_index",
     "patch_empty_ops",
-    "patch_empty_ops",
     "patch_probiou",
     "patch_loss_on_cpu",
 ]
@@ -141,6 +140,12 @@ def enable(framework: str = "auto", verbose: bool = True,
     if framework == "none":
         return ""
 
+    import torch_directml
+
+    if not torch_directml.is_available():
+        raise RuntimeError("未找到可用的 DirectML 设备，请检查显卡驱动")
+    name = torch_directml.device_name(0).rstrip("\0")
+
     layers = ["torch"]
     if framework == "ultralytics" or (framework == "auto" and _ultralytics_installed()):
         layers.append("ultralytics")
@@ -160,12 +165,6 @@ def enable(framework: str = "auto", verbose: bool = True,
         if loss_on_cpu:
             patch_loss_on_cpu()
 
-    name = ""
-    try:
-        import torch_directml
-        name = torch_directml.device_name(0)
-    except Exception:
-        pass
     if verbose:
         print("[Direct_AMD_train] 补丁已生效（%s 层），设备: %s"
               % ("+".join(layers), name or "privateuseone:0"))
