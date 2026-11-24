@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Direct_AMD_Train"
-version = "1.0.0"
+version = "1.1.0"
 description = "让 PyTorch / ultralytics 在 AMD 显卡（DirectML / DirectX 12）上正常训练与调试：补齐后端算子差异 + 能力探测 + 数值对齐自检"
 readme = "README.md"
 requires-python = ">=3.8"

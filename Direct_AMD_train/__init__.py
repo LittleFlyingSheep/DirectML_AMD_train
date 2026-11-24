@@ -60,15 +60,16 @@ from ._patches import (
 from .probe import format_probe, probe_operators
 from .registry import format_patches, list_patches
 from .selftest import check_gradient_alignment
-from .trainer import export_onnx, predict_yolo, resolve_device, train_yolo
+from .trainer import export_onnx, predict_yolo, resolve_device, save_weights, train_yolo
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "enable",
     "train_yolo",
     "predict_yolo",
     "resolve_device",
+    "save_weights",
     "export_onnx",
     "check_gradient_alignment",
     "probe_operators",

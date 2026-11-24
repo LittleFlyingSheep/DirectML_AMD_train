@@ -10,7 +10,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-__all__ = ["train_yolo", "predict_yolo", "export_onnx", "resolve_device", "environment_info"]
+__all__ = ["train_yolo", "predict_yolo", "export_onnx", "resolve_device", "environment_info",
+           "save_weights"]
 
 
 def resolve_device(device: Any = "dml"):
@@ -134,6 +135,18 @@ def predict_yolo(source: Any, *, model: str = "yolov8s.pt", device: Any = "dml",
     from ultralytics import YOLO
 
     return YOLO(model).predict(source=source, device=dev, **kwargs)
+
+
+def save_weights(model, file) -> None:
+    """将模型 state_dict 保存为 CPU 张量，供 torch.load(weights_only=True) 加载。"""
+    import torch
+
+    state = model.state_dict()
+    for name, value in state.items():
+        if isinstance(value, torch.Tensor):
+            # DirectML 的 NumPy 序列化路径无法由默认的 weights_only 加载器读取。
+            state[name] = value.cpu()
+    torch.save(state, file)
 
 
 def export_onnx(

@@ -140,6 +140,35 @@ with torch.no_grad():
 | `"ultralytics"` | 两层都打（会 import ultralytics） |
 | `"none"` | 一条都不打（只做环境探测时用） |
 
+### 复现 PyTorch 官方教程
+
+v1.1 提供两个端到端用例。脚本使用相同的初始权重和数据顺序在 CPU 和 DirectML
+上训练，然后保存权重、重新加载，并在测试集上对照准确率和 logits。
+
+~~~powershell
+python -m examples.torch_tutorials fashion-mnist --download
+python -m examples.torch_tutorials cifar10 --download
+python -m pytest tests/test_torch_tutorials.py -q
+~~~
+
+回归测试使用固定输入对照损失、梯度、参数更新和重载后的推理输出，无需下载数据。
+模型结构来自 [Fashion-MNIST MLP 教程](https://docs.pytorch.org/tutorials/beginner/basics/buildmodel_tutorial.html)
+和 [CIFAR-10 CNN 教程](https://docs.pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html)。
+
+DirectML 上直接保存的张量可能走 NumPy 序列化路径，导致 `weights_only=True`
+加载失败。`save_weights()` 将 `state_dict` 中的张量转成 CPU 张量，训练模型仍留在原设备。
+恢复时先在 CPU 上加载，再把模型移到需要的设备。
+
+~~~python
+import torch
+from Direct_AMD_train import save_weights
+
+save_weights(model, "model.pt")
+restored = MyModel()
+restored.load_state_dict(torch.load("model.pt", map_location="cpu", weights_only=True))
+restored.to(device).eval()
+~~~
+
 ---
 
 ## 能力矩阵
